@@ -35,7 +35,9 @@ class TTSProvider(TTSProviderBase):
             "speed": 1,
             "vol": 1,
             "pitch": 0,
-            "emotion": "happy",
+            # --------- 现已弃用的模型参数 --------
+            # "emotion": "happy",
+            # --------- 现已弃用的模型参数 --------
         }
         default_pronunciation_dict = {"tone": ["处理/(chu3)(li3)", "危险/dangerous"]}
         defult_audio_setting = {
@@ -74,7 +76,10 @@ class TTSProvider(TTSProviderBase):
                 config["ttsPitch"], min_val=-12, max_val=12, base_val=0
             ))
 
-        self.host = "api.minimaxi.com"  # 备用地址：api-bj.minimaxi.com
+        # ----------------- 修改接口调用地址 -----------------
+        self.host = "api.minimax.io"  # 备用地址：api-bj.minimaxi.com
+        # ----------------- 修改接口调用地址 -----------------
+
         self.api_url = f"https://{self.host}/v1/t2a_v2?GroupId={self.group_id}"
         self.header = {
             "Content-Type": "application/json",
@@ -207,6 +212,16 @@ class TTSProvider(TTSProviderBase):
                         )
                         self.tts_audio_queue.put((SentenceType.LAST, [], None))
                         return
+                        
+                    # ----------------- 新增调试拦截代码 开始 -----------------
+                    content_type = resp.headers.get("Content-Type", "")
+                    if "application/json" in content_type:
+                        # 如果返回的是普通 JSON，说明触发了 MiniMax 的业务错误
+                        error_text = await resp.text()
+                        logger.bind(tag=TAG).error(f"MiniMax API 业务报错: {error_text}")
+                        # 抛出异常让外层捕获，阻止打印“生成成功”
+                        raise Exception(f"MiniMax 报错: {error_text}")
+                    # ----------------- 新增调试拦截代码 结束 -----------------
 
                     self.pcm_buffer.clear()
                     self.tts_audio_queue.put((SentenceType.FIRST, [], text))
