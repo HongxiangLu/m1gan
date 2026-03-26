@@ -2,6 +2,12 @@ import os
 import json
 import requests
 import yaml
+from dotenv import load_dotenv
+
+# 加载项目根目录的 .env 文件
+script_dir = os.path.dirname(os.path.abspath(__file__))
+dotenv_path = os.path.join(script_dir, "../..", ".env")
+load_dotenv(dotenv_path)
 
 # ================= 动态读取配置 =================
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -25,21 +31,16 @@ print(f"[*] 成功从配置文件加载 Group ID，准备调用语音合成接�
 
 # ================= 语音合成参数配置 =================
 # 你刚刚复刻成功的专属音色 ID
-VOICE_ID = "TED-Talk" 
+VOICE_ID = os.getenv("VOICE_DOWNLOAD_ID") 
 
 # 你想让这个音色说的话
-TEXT_TO_SPEAK = '''Why do we crave love, yet so often feel lonely and disconnected?
- All About Love: New Visions reveals the answer
-We've misunderstood love, treating it as a noun instead of a verb.
-A New York Times bestseller and feminist classic, this book challenges the narrow view of love as simply romance or desire, revealing true love as an action-one rooted in care, compassion, and unity.
-With provocative and deeply personal insight,bell hooks exposes how society's failure to teach love has left us divided—and offers a path toward healing by practicing love in our homes, schools, and workplaces. 
-First published in 2001, this paperback classic continues to illuminate lives. Let All About Love: New Visions transform how you see love—and lead you to a more connected, meaningful life.'''
+TEXT_TO_SPEAK = os.getenv("VOICE_DOWNLOAD_TEXT")
 
 # 指定模型，直接读取配置中的模型，若没有则默认使用 speech-02-turbo
 MODEL = minimax_config.get("model", "speech-02-turbo")
 
 # 输出音频的保存路径与名称
-OUTPUT_FILE = "TED.mp3"
+OUTPUT_FILE = os.getenv("VOICE_DOWNLOAD_OUTPUT")
 # =================================================
 
 def generate_speech():

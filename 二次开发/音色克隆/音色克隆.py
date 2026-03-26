@@ -3,6 +3,13 @@ import json
 import requests
 import time
 import yaml
+from dotenv import load_dotenv
+
+# 加载项目根目录的 .env 文件
+# 定位到项目根目录 (二次开发/音色克隆/../../.env)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+dotenv_path = os.path.join(script_dir, "../..", ".env")
+load_dotenv(dotenv_path)
 
 # ================= 动态读取配置 =================
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -24,21 +31,19 @@ except Exception as e:
 
 print(f"[*] 成功从配置文件加载 Group ID: {GROUP_ID}")
 
-# ================= 手动配置区域 =================
-# 1. 基础复刻音频 (必填，提供基础音色，10秒到5分钟)
-AUDIO_FILE_PATH = "SecondaryDevelopment/VoiceReproduction/汪曾祺-01.mp3"
+# ================= 配置区域 =================
+# 1. 基础复刻音频 (提供基础音色，10秒到5分钟)
+AUDIO_FILE_PATH = os.getenv("VOICE_CLONE_AUDIO_FILE")
 
-# 2. 示例情感音频 (可选，用于增强特定情绪，时长需小于 8 秒。如果不想要，设为 "")
-PROMPT_AUDIO_PATH = "SecondaryDevelopment/VoiceReproduction/汪曾祺-02.mp3"
+# 2. 示例情感音频 (可选，用于增强特定情绪，时长需小于 8 秒)
+PROMPT_AUDIO_PATH = os.getenv("VOICE_CLONE_PROMPT_AUDIO")
 
-# 3. 示例音频对应的文本 (如果提供了示例音频，建议提供对应文本以提高准确率)
-PROMPT_TEXT = "我的家乡，在京杭大运河的下边儿。"
+# 3. 示例音频对应的文本
+PROMPT_TEXT = os.getenv("VOICE_CLONE_PROMPT_TEXT")
 
 # 新音色的名字 (长度8-256，只能包含字母、数字、_、-)
-CUSTOM_VOICE_ID = "WangZengqi" 
+CUSTOM_VOICE_ID = os.getenv("VOICE_ID") 
 
-# 可选：指定噪音抑制程度 (0~1之间，默认1代表最强抑制)
-NOISE_CAPACITY = 1 
 # ==========================================
 
 # Minimax海外版平台
@@ -91,8 +96,7 @@ def clone_voice(base_file_id, voice_id, prompt_file_id="", prompt_text=""):
     
     payload = {
         "voice_id": voice_id,
-        "file_id": base_file_id,
-        "noise_capacity": NOISE_CAPACITY
+        "file_id": base_file_id
     }
 
     # 如果有示例情感音频，则封装 clone_prompt

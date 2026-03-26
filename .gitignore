@@ -197,13 +197,7 @@ my_wakeup_words.mp3
 /config/assets/wakeup_words/*.wav
 
 # 音频复刻过程中使用的音频
-/SecondaryDevelopment/VoiceReproduction/*.mp3
-
-# 知识库构建过程中用到的文档
-/SecondaryDevelopment/KnowledgeBase/documents/*.pdf
-
-# 知识库构建脚本，还没有开发完成
-/SecondaryDevelopment/KnowledgeBase
+/二次开发/音色克隆/**/*.mp3
 
 # 大体积音频文件
 /music
