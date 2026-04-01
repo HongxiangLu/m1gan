@@ -198,12 +198,14 @@ class TTSProvider(TTSProviderBase):
             * 2
         )  # 16-bit = 2 bytes
         try:
-            async with aiohttp.ClientSession() as session:
+            # 原先的超时设置过短，放宽限制以适应流式传输
+            # 原先的总超时为 10 秒，流式返回数据量稍大就会超出限制
+            timeout = aiohttp.ClientTimeout(total=60, connect=5, sock_read=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     self.api_url,
                     headers=self.header,
                     data=json.dumps(payload),
-                    timeout=10,
                 ) as resp:
 
                     if resp.status != 200:
@@ -295,7 +297,10 @@ class TTSProvider(TTSProviderBase):
                         self._process_before_stop_play_files()
 
         except Exception as e:
-            logger.bind(tag=TAG).error(f"TTS请求异常: {e}")
+            # 丰富异常处理的信息输出
+            logger.bind(tag=TAG).error(
+                f"TTS请求异常: {type(e).__name__}: {e}, 文本: {text}, 堆栈: {traceback.format_exc()}"
+            )
             self.tts_audio_queue.put((SentenceType.LAST, [], None))
 
     async def close(self):
@@ -386,5 +391,8 @@ class TTSProvider(TTSProviderBase):
                 return opus_datas
 
         except Exception as e:
-            logger.bind(tag=TAG).error(f"TTS请求异常: {e}")
+            # 丰富异常处理的信息输出
+            logger.bind(tag=TAG).error(
+                f"TTS请求异常: {type(e).__name__}: {e}, 文本: {text}, 堆栈: {traceback.format_exc()}"
+            )
             return []
