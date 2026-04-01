@@ -53,8 +53,11 @@ class ServerMCPManager:
             # 初始化服务端MCP客户端
             logger.bind(tag=TAG).info(f"初始化服务端MCP客户端: {name}")
             client = ServerMCPClient(srv_config)
-            # 设置超时时间10秒
-            await asyncio.wait_for(client.initialize(logging_callback=self.logging_callback), timeout=10)
+            # 修复：远程MCP服务需要建立连接、完成握手、获取工具列表，适当放宽超时
+            # streamablehttp_client 的 timeout 默认是 30 秒
+            # 可在 .mcp_server_settings.json 中为每个服务单独设置超时
+            init_timeout = srv_config.get("init_timeout", 30)
+            await asyncio.wait_for(client.initialize(logging_callback=self.logging_callback), timeout=init_timeout)
 
             # 使用锁保护共享状态的修改
             async with self._init_lock:
@@ -64,7 +67,9 @@ class ServerMCPManager:
 
         except asyncio.TimeoutError:
             logger.bind(tag=TAG).error(
-                f"Failed to initialize MCP server {name}: Timeout"
+                # 修复：改进超时日志，输出具体超时时长和调整方式的提示
+                f"Failed to initialize MCP server {name}: Timeout ({init_timeout}s). "
+                f"可在配置中通过 init_timeout 调整超时时间"
             )
             if client:
                 await client.cleanup()
