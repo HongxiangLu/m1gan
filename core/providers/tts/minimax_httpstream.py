@@ -200,7 +200,8 @@ class TTSProvider(TTSProviderBase):
         try:
             # 原先的超时设置过短，放宽限制以适应流式传输
             # 原先的总超时为 10 秒，流式返回数据量稍大就会超出限制
-            timeout = aiohttp.ClientTimeout(total=60, connect=5, sock_read=15)
+            # 修复：增加 connect 超时为 15 秒（之前为 5 秒会导致网络不佳时连接超时）
+            timeout = aiohttp.ClientTimeout(total=60, connect=15, sock_read=15)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     self.api_url,

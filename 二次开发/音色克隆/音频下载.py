@@ -31,7 +31,7 @@ print(f"[*] 成功从配置文件加载 Group ID，准备调用语音合成接�
 
 # ================= 语音合成参数配置 =================
 # 你刚刚复刻成功的专属音色 ID
-VOICE_ID = os.getenv("VOICE_DOWNLOAD_ID") 
+VOICE_ID = os.getenv("VOICE_ID") 
 
 # 你想让这个音色说的话
 TEXT_TO_SPEAK = os.getenv("VOICE_DOWNLOAD_TEXT")
