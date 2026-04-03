@@ -197,105 +197,135 @@ class TTSProvider(TTSProviderBase):
             / 1000
             * 2
         )  # 16-bit = 2 bytes
-        try:
-            # 原先的超时设置过短，放宽限制以适应流式传输
-            # 原先的总超时为 10 秒，流式返回数据量稍大就会超出限制
-            # 修复：增加 connect 超时为 15 秒（之前为 5 秒会导致网络不佳时连接超时）
-            timeout = aiohttp.ClientTimeout(total=60, connect=15, sock_read=15)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    self.api_url,
-                    headers=self.header,
-                    data=json.dumps(payload),
-                ) as resp:
 
-                    if resp.status != 200:
+        max_retries = 3  # 最大重试次数
+        try:
+            timeout = aiohttp.ClientTimeout(total=60, connect=15, sock_read=15)
+
+            # 重试逻辑：仅在连接阶段重试，不影响后续流式音频处理
+            resp = None
+            session = None
+            for attempt in range(1, max_retries + 1):
+                try:
+                    session = aiohttp.ClientSession(timeout=timeout)
+                    resp = await session.post(
+                        self.api_url,
+                        headers=self.header,
+                        data=json.dumps(payload),
+                    )
+                    break  # 连接成功，跳出重试循环
+                except (aiohttp.ClientConnectorError, ConnectionError, asyncio.TimeoutError) as e:
+                    # 关闭本次失败的 session
+                    if session:
+                        await session.close()
+                        session = None
+                    if attempt < max_retries:
+                        wait_time = 2 * attempt  # 指数退避：2s, 4s
+                        logger.bind(tag=TAG).warning(
+                            f"TTS连接失败第{attempt}次，{wait_time}秒后重试: {type(e).__name__}: {e}"
+                        )
+                        await asyncio.sleep(wait_time)
+                    else:
                         logger.bind(tag=TAG).error(
-                            f"TTS请求失败: {resp.status}, {await resp.text()}"
+                            f"TTS连接最终失败，已重试{max_retries}次: {type(e).__name__}: {e}"
                         )
                         self.tts_audio_queue.put((SentenceType.LAST, [], None))
                         return
-                        
-                    # ----------------- 新增调试拦截代码 开始 -----------------
-                    content_type = resp.headers.get("Content-Type", "")
-                    if "application/json" in content_type:
-                        # 如果返回的是普通 JSON，说明触发了 MiniMax 的业务错误
-                        error_text = await resp.text()
-                        logger.bind(tag=TAG).error(f"MiniMax API 业务报错: {error_text}")
-                        # 抛出异常让外层捕获，阻止打印“生成成功”
-                        raise Exception(f"MiniMax 报错: {error_text}")
-                    # ----------------- 新增调试拦截代码 结束 -----------------
 
-                    self.pcm_buffer.clear()
-                    self.tts_audio_queue.put((SentenceType.FIRST, [], text))
+            # 连接成功后，处理响应（以下逻辑不变）
+            try:
+                if resp.status != 200:
+                    logger.bind(tag=TAG).error(
+                        f"TTS请求失败: {resp.status}, {await resp.text()}"
+                    )
+                    self.tts_audio_queue.put((SentenceType.LAST, [], None))
+                    return
 
-                    # 处理音频流数据
-                    buffer = b""
-                    async for chunk in resp.content.iter_any():
-                        if not chunk:
+                # ----------------- 新增调试拦截代码 开始 -----------------
+                content_type = resp.headers.get("Content-Type", "")
+                if "application/json" in content_type:
+                    error_text = await resp.text()
+                    logger.bind(tag=TAG).error(f"MiniMax API 业务报错: {error_text}")
+                    raise Exception(f"MiniMax 报错: {error_text}")
+                # ----------------- 新增调试拦截代码 结束 -----------------
+
+                self.pcm_buffer.clear()
+                self.tts_audio_queue.put((SentenceType.FIRST, [], text))
+
+                # 处理音频流数据
+                buffer = b""
+                async for chunk in resp.content.iter_any():
+                    if not chunk:
+                        continue
+
+                    buffer += chunk
+                    while True:
+                        # 查找数据块分隔符
+                        header_pos = buffer.find(b"data: ")
+                        if header_pos == -1:
+                            break
+
+                        end_pos = buffer.find(b"\n\n", header_pos)
+                        if end_pos == -1:
+                            break
+
+                        # 提取单个完整JSON块
+                        json_str = buffer[header_pos + 6 : end_pos].decode("utf-8")
+                        buffer = buffer[end_pos + 2 :]
+
+                        try:
+                            data = json.loads(json_str)
+
+                            # 检查业务层错误
+                            base_resp = data.get("base_resp", {})
+                            status_code = base_resp.get("status_code", 0)
+                            if status_code != 0:
+                                status_msg = base_resp.get("status_msg", "未知错误")
+                                logger.bind(tag=TAG).error(
+                                    f"TTS请求失败, 错误码:{status_code}, 错误消息:{status_msg}"
+                                )
+                                self.tts_audio_queue.put((SentenceType.LAST, [], None))
+                                return
+
+                            status = data.get("data", {}).get("status", 1)
+                            audio_hex = data.get("data", {}).get("audio")
+
+                            # 仅处理status=1的有效音频块 忽略status=2的结束汇总块
+                            if status == 1 and audio_hex:
+                                pcm_data = bytes.fromhex(audio_hex)
+                                self.pcm_buffer.extend(pcm_data)
+
+                        except json.JSONDecodeError as e:
+                            logger.bind(tag=TAG).error(f"JSON解析失败: {e}")
                             continue
 
-                        buffer += chunk
-                        while True:
-                            # 查找数据块分隔符
-                            header_pos = buffer.find(b"data: ")
-                            if header_pos == -1:
-                                break
+                    while len(self.pcm_buffer) >= frame_bytes:
+                        frame = bytes(self.pcm_buffer[:frame_bytes])
+                        del self.pcm_buffer[:frame_bytes]
 
-                            end_pos = buffer.find(b"\n\n", header_pos)
-                            if end_pos == -1:
-                                break
-
-                            # 提取单个完整JSON块
-                            json_str = buffer[header_pos + 6 : end_pos].decode("utf-8")
-                            buffer = buffer[end_pos + 2 :]
-
-                            try:
-                                data = json.loads(json_str)
-
-                                # 检查业务层错误
-                                base_resp = data.get("base_resp", {})
-                                status_code = base_resp.get("status_code", 0)
-                                if status_code != 0:
-                                    status_msg = base_resp.get("status_msg", "未知错误")
-                                    logger.bind(tag=TAG).error(
-                                        f"TTS请求失败, 错误码:{status_code}, 错误消息:{status_msg}"
-                                    )
-                                    self.tts_audio_queue.put((SentenceType.LAST, [], None))
-                                    return
-
-                                status = data.get("data", {}).get("status", 1)
-                                audio_hex = data.get("data", {}).get("audio")
-
-                                # 仅处理status=1的有效音频块 忽略status=2的结束汇总块
-                                if status == 1 and audio_hex:
-                                    pcm_data = bytes.fromhex(audio_hex)
-                                    self.pcm_buffer.extend(pcm_data)
-
-                            except json.JSONDecodeError as e:
-                                logger.bind(tag=TAG).error(f"JSON解析失败: {e}")
-                                continue
-
-                        while len(self.pcm_buffer) >= frame_bytes:
-                            frame = bytes(self.pcm_buffer[:frame_bytes])
-                            del self.pcm_buffer[:frame_bytes]
-
-                            self.opus_encoder.encode_pcm_to_opus_stream(
-                                frame, end_of_stream=False, callback=self.handle_opus
-                            )
-
-                    # flush 剩余不足一帧的数据
-                    if self.pcm_buffer:
                         self.opus_encoder.encode_pcm_to_opus_stream(
-                            bytes(self.pcm_buffer),
-                            end_of_stream=True,
-                            callback=self.handle_opus,
+                            frame, end_of_stream=False, callback=self.handle_opus
                         )
-                        self.pcm_buffer.clear()
 
-                    # 如果是最后一段，输出音频获取完毕
-                    if is_last:
-                        self._process_before_stop_play_files()
+                # flush 剩余不足一帧的数据
+                if self.pcm_buffer:
+                    self.opus_encoder.encode_pcm_to_opus_stream(
+                        bytes(self.pcm_buffer),
+                        end_of_stream=True,
+                        callback=self.handle_opus,
+                    )
+                    self.pcm_buffer.clear()
+
+                # 如果是最后一段，输出音频获取完毕
+                if is_last:
+                    self._process_before_stop_play_files()
+
+            finally:
+                # 确保响应和会话被正确关闭
+                if resp:
+                    resp.release()
+                if session:
+                    await session.close()
 
         except Exception as e:
             # 丰富异常处理的信息输出
